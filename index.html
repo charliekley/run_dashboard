@@ -259,6 +259,24 @@ details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background
     <div class="tablewrap" id="tblTop"></div>
   </div>
 
+  <div class="panel">
+    <div class="chart-head"><div><h3>10 longest runs</h3><p>Your biggest single runs of all time, regardless of the date range above.</p></div></div>
+    <div class="tablewrap" id="tblLongest"></div>
+  </div>
+
+  <details class="panel bk" id="firstRace">
+    <summary>Training for your first race? Start here</summary>
+    <ul class="guide" style="margin-top:8px">
+      <li><b>Get your data:</b> on the Strava website go to Settings, then My Account, then "Download or Delete Your Account", and request your archive. Strava emails you a zip. Unzip it and upload <code>activities.csv</code> above. Nothing leaves your device.</li>
+      <li><b>Set your race:</b> pick the race date at the top. Leave "Peak weekly miles" blank to get a sensible default, or type the most you are comfortable running in a week.</li>
+      <li><b>Build slowly:</b> add no more than about 10% to your weekly miles each week, and take an easier week every fourth week. The weekly chart shows the plan as a dashed line.</li>
+      <li><b>Make one run long:</b> your longest run is the most important number. For a 5K aim to reach 3 to 4 miles, a 10K 7 to 8, a half marathon 10 to 12, a marathon 18 to 20. Check "10 longest runs" below to see how close you are.</li>
+      <li><b>Go easy:</b> most runs should feel conversational. Slow is fine. A first race is about finishing, so pick a goal time later, once your long runs show what you can hold.</li>
+      <li><b>Race week:</b> cut your mileage, sleep, and don't try anything new: no new shoes, food or gear. Start slower than feels necessary and speed up in the second half.</li>
+      <li><b>First time ever?</b> If you are brand new to running, start with run/walk intervals (for example 1 minute running, 2 minutes walking) three days a week and extend the running a little each week.</li>
+    </ul>
+  </details>
+
   <section class="panel method">
     <h3>How distance-adjusted pace works</h3>
     <p>A 5 mile run at 7:30 per mile is a better effort than a 3 mile run at 7:30, so raw pace alone misleads. This page uses the Riegel formula, a standard way to compare efforts of different lengths: <code>T2 = T1 × (D2 ÷ D1)^1.06</code>. It converts each run into the time you would take at a common distance (5K, 10K, half, or marathon), shown as pace per mile.</p>
@@ -7137,6 +7155,10 @@ function render() {
     `<tr><td class="l">Best adjusted pace</td><td>${bestEq ? fmtPace(equivPace(bestEq, refMi)) + '/mi' : '–'}</td><td>${settings.ref} equivalent</td></tr>` +
     `<tr><td class="l">Average per week</td><td>${fmtMi(total / Math.max(allWeeks.length, 1))} mi</td><td>${fmtMi(avgRunsWk)} runs a week</td></tr>` +
     '</tbody></table>';
+  const longest10 = runs.slice().sort((a, b) => b.mi - a.mi).slice(0, 10);
+  let tl = '<table><thead><tr><th>#</th><th class="l">Date</th><th class="l">Run</th><th>Miles</th><th>Time</th><th>Pace</th></tr></thead><tbody>';
+  longest10.forEach((r, i) => { tl += `<tr><td>${i + 1}</td><td class="l">${fmtDate(r.t)}</td><td class="l name">${String(r.name).replace(/[<&>]/g, '')}</td><td>${fmtMi(r.mi, 2)}</td><td>${fmtTime(r.mt)}</td><td>${fmtPace(pace(r))}/mi</td></tr>`; });
+  $('tblLongest').innerHTML = tl + '</tbody></table>';
   const topN = +settings.topN || 10;
   const top = ranged.filter(r => equivEligible(r) && r.mi >= 3)
     .map(r => ({ r, e: equivPace(r, refMi) })).sort((a, b) => a.e - b.e).slice(0, topN);
