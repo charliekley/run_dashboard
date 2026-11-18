@@ -139,6 +139,9 @@ td.name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .guide { margin: 0; padding-left: 18px; color: var(--ink2); font-size: 13.5px; display: flex; flex-direction: column; gap: 6px; }
 details.bk summary { cursor: pointer; font-weight: 600; }
 details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background: var(--bg); color: var(--ink); border: 1px solid var(--axis); border-radius: 6px; padding: 8px; font: 12px ui-monospace, monospace; }
+.sync-row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; }
+.sync a { color: var(--accent); }
+.sync .sub.ok { color: var(--good); }
 @media (max-width: 1000px) { .week { grid-template-columns: minmax(0, 1fr); } .phases { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) {
   .race, .grid2 { grid-template-columns: minmax(0, 1fr); }
@@ -169,6 +172,38 @@ details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background
     <button class="tab" role="tab" id="tabPlan" aria-selected="false" type="button">Marathon plan</button>
   </nav>
 
+  <section class="panel sync" aria-label="Strava sync">
+    <div class="sync-row">
+      <div style="min-width:0">
+        <h3>Strava sync</h3>
+        <p class="sub" id="syncStatus">Not connected. Connect once, then press Sync to pull every run since your latest one.</p>
+      </div>
+      <div class="actions">
+        <button class="btn" id="syncBtn" type="button" hidden>Sync new runs</button>
+        <button class="btn" id="connectBtn" type="button">Connect Strava</button>
+        <button class="btn ghost" id="syncSetupBtn" type="button">Setup</button>
+      </div>
+    </div>
+    <div id="syncSetup" hidden>
+      <ol class="guide" style="margin-top:10px">
+        <li>Go to <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a> and create an app. You can enter anything for the name and website. For <b>Authorization Callback Domain</b>, enter <code id="cbDomain">localhost</code>.</li>
+        <li>Copy the <b>Client ID</b> and <b>Client Secret</b> from that page into the boxes below. They are saved in this browser only and are sent only to Strava.</li>
+        <li>Press <b>Connect Strava</b> and approve. You only do this once per browser.</li>
+      </ol>
+      <div class="settings" style="margin-top:10px">
+        <div class="field"><label for="sClientId">Client ID</label><input type="text" id="sClientId" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="sSecret">Client Secret</label><input type="password" id="sSecret" autocomplete="off"></div>
+      </div>
+      <div id="pasteBox" hidden style="margin-top:10px">
+        <p class="note">After you approve, Strava sends you to a page that will not load. That is expected. Copy the full address from your browser's address bar and paste it here.</p>
+        <div class="actions" style="margin-top:6px">
+          <input type="text" id="sPaste" placeholder="http://localhost/?state=...&code=..." style="flex:1;min-width:0;background:var(--bg);border:1px solid var(--axis);border-radius:6px;padding:7px 9px">
+          <button class="btn" id="sPasteGo" type="button">Finish connecting</button>
+        </div>
+      </div>
+      <p class="note"><button class="skip" id="disconnectBtn" type="button" hidden>Disconnect Strava</button></p>
+    </div>
+  </section>
   <div id="viewDash" class="view" role="tabpanel">
   <div class="drop" id="drop" tabindex="0">
     <p><b>Drop activities.csv here</b> or pick the file. It is read in your browser and never uploaded anywhere. Your last upload is remembered on this device, so re-upload only when you want fresh numbers.</p>
@@ -6924,11 +6959,14 @@ function loadText(text, fileName) {
   try {
     const { runs, skipped } = toRuns(text);
     if (!runs.length) throw new Error('No runs found in that file. It needs rows with Activity Type "Run" and a distance.');
-    lsSet(STORE, { runs: runs.map(r => [r.id, r.t, +r.mi.toFixed(4), Math.round(r.mt), Math.round(r.et), r.gain == null ? null : Math.round(r.gain), r.name, r.hr]), savedAt: Date.now(), file: fileName || '' });
+    saveRuns(runs, fileName);
     setRuns(runs, { skipped });
   } catch (e) {
     $('err').textContent = e.message; $('err').hidden = false;
   }
+}
+function saveRuns(runs, fileName) {
+  return lsSet(STORE, { runs: runs.map(r => [r.id, r.t, +r.mi.toFixed(4), Math.round(r.mt), Math.round(r.et), r.gain == null ? null : Math.round(r.gain), r.name, r.hr]), savedAt: Date.now(), file: fileName || '' });
 }
 function loadSaved() {
   const s = lsGet(STORE);
@@ -7421,5 +7459,155 @@ function initPlan() {
 $('tabDash').onclick = () => showTab('dash');
 $('tabPlan').onclick = () => showTab('plan');
 if (lsGet(TAB_KEY) === 'plan') showTab('plan');
+
+/* ---------- Strava sync ----------
+   Uses Strava's free personal API app (strava.com/settings/api). Everything runs in the browser:
+   the client ID, secret and tokens live in localStorage and are sent only to strava.com. */
+const STRAVA_KEY = 'run-dashboard-strava-v1';
+const STRAVA = 'https://www.strava.com';
+let strava = lsGet(STRAVA_KEY) || {};
+const saveStrava = () => lsSet(STRAVA_KEY, strava);
+const isHttp = /^https?:$/.test(location.protocol);
+const redirectUri = () => isHttp ? location.origin + location.pathname : 'http://localhost/';
+
+function syncMsg(text, ok) { const el = $('syncStatus'); el.textContent = text; el.classList.toggle('ok', !!ok); }
+function fmtClock(t) { const d = new Date(t); return `${fmtShort(t)}, ${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${d.getHours() < 12 ? 'am' : 'pm'}`; }
+
+function syncUI() {
+  const connected = !!strava.refresh;
+  $('syncBtn').hidden = !connected;
+  $('connectBtn').hidden = connected;
+  $('disconnectBtn').hidden = !connected;
+  $('sClientId').value = strava.clientId || '';
+  $('sSecret').value = strava.secret || '';
+  $('cbDomain').textContent = isHttp ? location.hostname : 'localhost';
+  if (connected) {
+    const who = strava.athlete ? `Connected as ${strava.athlete}.` : 'Connected.';
+    syncMsg(strava.lastSync ? `${who} Last synced ${fmtClock(strava.lastSync)}${strava.lastNote ? ': ' + strava.lastNote : ''}.` : `${who} Press Sync to pull your runs.`, true);
+  }
+}
+
+async function tokenRequest(params) {
+  const body = new URLSearchParams(Object.assign({ client_id: strava.clientId, client_secret: strava.secret }, params));
+  const res = await fetch(STRAVA + '/oauth/token', { method: 'POST', body });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || !j.access_token) throw new Error(j.message === 'Bad Request' || res.status === 400
+    ? 'Strava rejected the Client ID or Secret, or the code expired. Check them in Setup and connect again.'
+    : `Strava sign-in failed (${res.status}).`);
+  strava.access = j.access_token; strava.refresh = j.refresh_token; strava.expires = j.expires_at;
+  if (j.athlete) strava.athlete = [j.athlete.firstname, j.athlete.lastname].filter(Boolean).join(' ');
+  saveStrava();
+}
+async function accessToken() {
+  if (strava.access && strava.expires - 120 > Date.now() / 1000) return strava.access;
+  await tokenRequest({ grant_type: 'refresh_token', refresh_token: strava.refresh });
+  return strava.access;
+}
+
+function readCreds() {
+  strava.clientId = $('sClientId').value.trim(); strava.secret = $('sSecret').value.trim(); saveStrava();
+  if (!strava.clientId || !strava.secret) { $('syncSetup').hidden = false; syncMsg('Enter your Client ID and Client Secret first (see Setup).'); return false; }
+  return true;
+}
+function connect() {
+  if (!readCreds()) return;
+  const url = `${STRAVA}/oauth/authorize?` + new URLSearchParams({ client_id: strava.clientId, redirect_uri: redirectUri(), response_type: 'code', approval_prompt: 'auto', scope: 'read,activity:read_all', state: 'rundash' });
+  if (isHttp) { location.href = url; return; }
+  // Opened as a local file: Strava cannot redirect back here, so the user pastes the address instead.
+  window.open(url, '_blank', 'noopener');
+  $('syncSetup').hidden = false; $('pasteBox').hidden = false;
+  syncMsg('Approve in the Strava tab, then paste the address it lands on below.');
+}
+async function finishConnect(params) {
+  if (params.get('error')) { syncMsg('Strava access was not approved.'); return; }
+  const code = params.get('code'); if (!code) { syncMsg('That address has no code in it. Copy the whole address bar.'); return; }
+  if (!/activity:read/.test(params.get('scope') || 'activity:read')) { syncMsg('Please connect again and leave "View data about your activities" ticked.'); return; }
+  syncMsg('Connecting…');
+  try {
+    await tokenRequest({ grant_type: 'authorization_code', code });
+    $('pasteBox').hidden = true; $('syncSetup').hidden = true;
+    syncUI(); await syncNow();
+  } catch (e) { syncMsg(e.message); }
+}
+
+const toRun = a => ({
+  id: String(a.id), t: Date.parse(a.start_date), mi: a.distance / MI, mt: a.moving_time || a.elapsed_time,
+  et: a.elapsed_time || a.moving_time, gain: a.total_elevation_gain == null ? null : a.total_elevation_gain * 3.28084,
+  name: a.name || 'Run', hr: a.average_heartrate || null
+});
+
+let syncing = false;
+async function syncNow() {
+  if (syncing || !strava.refresh) return;
+  syncing = true; $('syncBtn').disabled = true; syncMsg('Syncing with Strava…');
+  try {
+    const base = state.sample ? [] : state.runs;
+    // Look back two days before the newest run so edits and timezone edges are caught; duplicates are merged by id.
+    const after = base.length ? Math.floor(base[base.length - 1].t / 1000) - 2 * 86400 : 0;
+    const got = [];
+    for (let page = 1; page < 100; page++) {
+      const token = await accessToken();
+      const res = await fetch(`${STRAVA}/api/v3/athlete/activities?after=${after}&per_page=200&page=${page}`, { headers: { Authorization: 'Bearer ' + token } });
+      if (res.status === 401) { strava.access = null; strava.refresh = null; saveStrava(); syncUI(); throw new Error('Strava access expired or was revoked. Press Connect Strava again.'); }
+      if (res.status === 429) throw new Error('Strava rate limit reached. Wait 15 minutes and try again.');
+      if (!res.ok) throw new Error(`Strava returned an error (${res.status}).`);
+      const list = await res.json();
+      got.push(...list);
+      if (list.length < 200) break;
+    }
+    const fetched = got.filter(a => /run/i.test(a.sport_type || a.type || '') && a.distance > 200 && (a.moving_time || a.elapsed_time) > 0).map(toRun);
+    const byId = new Map(base.map(r => [String(r.id), r]));
+    let added = 0;
+    for (const r of fetched) { if (!byId.has(r.id)) added++; byId.set(r.id, r); }
+    const merged = [...byId.values()].sort((a, b) => a.t - b.t);
+    if (merged.length) {
+      saveRuns(merged, 'strava');
+      setRuns(merged, {});
+    }
+    fillPlanFromRuns(merged, fetched);
+    strava.lastSync = Date.now();
+    strava.lastNote = added ? `${added} new run${added === 1 ? '' : 's'}` : 'no new runs';
+    saveStrava(); syncUI();
+  } catch (e) {
+    syncMsg(e instanceof TypeError ? 'Could not reach Strava. Check your connection and try again.' : e.message);
+  } finally { syncing = false; $('syncBtn').disabled = false; }
+}
+
+/* Write daily miles into the marathon plan. Days with a just-synced Strava run take Strava's total for that day;
+   other days are filled only if empty, so miles you typed by hand are kept. Stretch ticks are never touched. */
+function fillPlanFromRuns(runs, fresh) {
+  const first = dkey(planWeeks[0].days[0]), last = dkey(planWeeks[planWeeks.length - 1].days[6]);
+  const totals = {};
+  for (const r of runs) { const k = dkey(new Date(r.t)); if (k >= first && k <= last) totals[k] = (totals[k] || 0) + r.mi; }
+  const freshDays = new Set(fresh.map(r => dkey(new Date(r.t))));
+  let changed = false;
+  for (const [k, mi] of Object.entries(totals)) {
+    const L = plan.logs[k] || {};
+    if (L.mi > 0 && !freshDays.has(k)) continue;
+    const v = Math.min(+mi.toFixed(2), 60);
+    if (L.mi !== v) { L.mi = v; plan.logs[k] = L; changed = true; }
+  }
+  if (!changed) return;
+  savePlan();
+  if (planBuilt) { buildCalendar(); planWeeks.forEach(refreshWeek); if (!$('viewPlan').hidden) refreshPlanTop(); }
+}
+
+$('syncSetupBtn').onclick = () => { $('syncSetup').hidden = !$('syncSetup').hidden; };
+$('connectBtn').onclick = connect;
+$('syncBtn').onclick = syncNow;
+['sClientId', 'sSecret'].forEach(id => $(id).addEventListener('change', readCreds));
+$('sPasteGo').onclick = () => {
+  const v = $('sPaste').value.trim();
+  try { finishConnect(new URL(v).searchParams); } catch (e) { finishConnect(new URLSearchParams(v.split('?')[1] || '')); }
+};
+$('disconnectBtn').onclick = () => {
+  strava = { clientId: strava.clientId, secret: strava.secret }; saveStrava(); syncUI();
+  syncMsg('Disconnected. Your runs and plan are kept.');
+};
+syncUI();
+(() => {
+  const q = new URLSearchParams(location.search);
+  if (q.get('state') === 'rundash') { history.replaceState(null, '', location.pathname + location.hash); finishConnect(q); }
+})();
 
 </script>
