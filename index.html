@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Run Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -139,6 +141,13 @@ td.name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .guide { margin: 0; padding-left: 18px; color: var(--ink2); font-size: 13.5px; display: flex; flex-direction: column; gap: 6px; }
 details.bk summary { cursor: pointer; font-weight: 600; }
 details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background: var(--bg); color: var(--ink); border: 1px solid var(--axis); border-radius: 6px; padding: 8px; font: 12px ui-monospace, monospace; }
+.map-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.seg .btn[aria-pressed="true"], #mAreas .btn[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+#mAreas .btn, .seg .btn { padding: 6px 12px; font-size: 13px; }
+.mapwrap { position: relative; height: min(68vh, 640px); margin-top: 12px; border-radius: 6px; overflow: hidden; background: #08090b; touch-action: none; cursor: grab; }
+.mapwrap.drag { cursor: grabbing; }
+.mapwrap canvas { display: block; width: 100%; height: 100%; }
+@media (max-width: 760px) { .mapwrap { height: 440px; } }
 @media (max-width: 1000px) { .week { grid-template-columns: minmax(0, 1fr); } .phases { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) {
   .race, .grid2 { grid-template-columns: minmax(0, 1fr); }
@@ -167,6 +176,7 @@ details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background
   <nav class="tabs" role="tablist" aria-label="Pages">
     <button class="tab" role="tab" id="tabDash" aria-selected="true" type="button">Dashboard</button>
     <button class="tab" role="tab" id="tabPlan" aria-selected="false" type="button">Marathon plan</button>
+    <button class="tab" role="tab" id="tabMap" aria-selected="false" type="button">Map</button>
   </nav>
 
   <div id="viewDash" class="view" role="tabpanel">
@@ -285,6 +295,48 @@ details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background
   </section>
   </div>
 
+  <div id="viewMap" class="view" role="tabpanel" hidden>
+    <div class="drop" id="mDrop" tabindex="0">
+      <p><b>Drop your Strava export here</b>: the whole zip, the <code>activities</code> folder, or some .gpx files. They are read in your browser and never uploaded. Your routes are remembered on this device.</p>
+      <div class="actions">
+        <input type="file" id="mZip" accept=".zip,application/zip" hidden>
+        <input type="file" id="mFiles" accept=".gpx,.gz" multiple hidden>
+        <input type="file" id="mDir" webkitdirectory hidden>
+        <button class="btn" id="mPickZip" type="button">Choose zip</button>
+        <button class="btn ghost" id="mPickDir" type="button">Choose folder</button>
+        <button class="btn ghost" id="mPickFiles" type="button">Choose GPX files</button>
+      </div>
+    </div>
+    <div class="err" id="mErr" hidden role="alert"></div>
+    <p class="sub" id="mStatus" aria-live="polite"></p>
+
+    <section class="panel" id="mPanel" hidden>
+      <div class="map-bar">
+        <div class="actions" id="mAreas" role="group" aria-label="Area"></div>
+        <div class="actions seg" role="group" aria-label="View">
+          <button class="btn ghost" type="button" data-mode="heat" aria-pressed="true">Heatmap</button>
+          <button class="btn ghost" type="button" data-mode="race" aria-pressed="false">All runs at once</button>
+          <button class="btn ghost" type="button" data-mode="build" aria-pressed="false">Run by run</button>
+        </div>
+      </div>
+      <div class="mapwrap" id="mWrap"><canvas id="mCanvas" role="img" aria-label="Map of your run routes"></canvas></div>
+      <div class="map-bar" style="margin-top:10px">
+        <div class="actions" id="mPlayBar">
+          <button class="btn" id="mPlay" type="button">Play</button>
+          <input type="range" id="mScrub" min="0" max="1000" value="1000" aria-label="Animation position" style="width:min(320px,60vw)">
+          <select id="mSpeed" class="btn ghost" style="padding:7px 10px" aria-label="Animation length">
+            <option value="10">10 s</option><option value="20" selected>20 s</option><option value="40">40 s</option>
+          </select>
+        </div>
+        <div class="actions">
+          <label class="sub" style="margin:0;display:flex;gap:6px;align-items:center"><input type="checkbox" id="mTrim" checked> Hide start and end of each run</label>
+          <button class="btn ghost" id="mPng" type="button">Save image</button>
+          <button class="btn ghost" id="mVid" type="button">Save video</button>
+        </div>
+      </div>
+      <p class="note">Scroll or pinch to zoom, drag to move, double-click to reset. Brighter streets are ones you have run more often. "Hide start and end" trims the first and last quarter mile of every run so images you share don't point to your home.</p>
+    </section>
+  </div>
   <div id="viewPlan" class="view" role="tabpanel" hidden>
     <section class="panel race">
       <div>
@@ -7357,13 +7409,15 @@ function backupText() { return JSON.stringify({ app: 'run-plan', v: 1, logs: pla
 
 let planBuilt = false, scrolled = false;
 function showTab(which) {
-  const isPlan = which === 'plan';
-  $('viewDash').hidden = isPlan; $('viewPlan').hidden = !isPlan;
-  $('hdrActions').hidden = isPlan;
-  $('tabDash').setAttribute('aria-selected', String(!isPlan)); $('tabPlan').setAttribute('aria-selected', String(isPlan));
-  $('meta').textContent = isPlan ? 'Garmin Marathon, Saturday May 1, 2027' : $('meta').dataset.dash || $('meta').textContent;
+  const isPlan = which === 'plan', isMap = which === 'map';
+  $('viewDash').hidden = isPlan || isMap; $('viewPlan').hidden = !isPlan; $('viewMap').hidden = !isMap;
+  $('hdrActions').hidden = isPlan || isMap;
+  $('tabDash').setAttribute('aria-selected', String(!isPlan && !isMap)); $('tabPlan').setAttribute('aria-selected', String(isPlan));
+  $('tabMap').setAttribute('aria-selected', String(isMap));
+  if (isPlan) $('meta').textContent = 'Garmin Marathon, Saturday May 1, 2027';
   lsSet(TAB_KEY, which);
-  if (isPlan) {
+  if (isMap) { if (typeof mapShown === 'function') mapShown(); }
+  else if (isPlan) {
     if (!planBuilt) initPlan();
     refreshPlanTop(); planWeeks.forEach(refreshWeek);
     if (!scrolled) { scrolled = true; const cur = planWeeks.find(wk => weekState(wk).cur); if (cur) setTimeout(() => $('wk' + cur.w).scrollIntoView({ block: 'center' }), 60); }
@@ -7420,6 +7474,348 @@ function initPlan() {
 
 $('tabDash').onclick = () => showTab('dash');
 $('tabPlan').onclick = () => showTab('plan');
-if (lsGet(TAB_KEY) === 'plan') showTab('plan');
+$('tabMap').onclick = () => showTab('map');
+
+/* ---------- route map: heatmap + animations from GPX tracks ----------
+   Tracks are parsed in the browser, thinned to one point every ~8 m, and kept in IndexedDB on this device. */
+const MAP_DB = 'run-dashboard-map', TRIM_MI = 0.25;
+const mp = { tracks: [], areas: [], area: 0, mode: 'heat', p: 1, playing: false, view: null, raf: 0, last: 0, recorder: null };
+
+function idb(op, val) {
+  return new Promise(res => {
+    try {
+      const rq = indexedDB.open(MAP_DB, 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+      rq.onerror = () => res(null);
+      rq.onsuccess = () => {
+        const tx = rq.result.transaction('kv', op === 'get' ? 'readonly' : 'readwrite'), st = tx.objectStore('kv');
+        const r = op === 'get' ? st.get('tracks') : st.put(val, 'tracks');
+        r.onsuccess = () => res(op === 'get' ? r.result : true); r.onerror = () => res(null);
+      };
+    } catch (e) { res(null); }
+  });
+}
+
+/* Minimal zip reader using the browser's built-in DecompressionStream (no library). */
+async function unzip(buf, want) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf), out = [];
+  let e = buf.byteLength - 22;
+  while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('That zip file looks damaged.');
+  let n = dv.getUint16(e + 10, true), o = dv.getUint32(e + 16, true);
+  const dec = new TextDecoder();
+  for (let i = 0; i < n; i++) {
+    const method = dv.getUint16(o + 10, true), csize = dv.getUint32(o + 20, true);
+    const nl = dv.getUint16(o + 28, true), xl = dv.getUint16(o + 30, true), cl = dv.getUint16(o + 32, true);
+    const lho = dv.getUint32(o + 42, true), name = dec.decode(u8.subarray(o + 46, o + 46 + nl));
+    o += 46 + nl + xl + cl;
+    if (!want(name)) continue;
+    const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true);
+    const raw = u8.subarray(start, start + csize);
+    const data = method === 0 ? raw : method === 8 ? new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()) : null;
+    if (data) out.push({ name, data });
+  }
+  return out;
+}
+async function gunzipMaybe(name, data) {
+  if (!/\.gz$/i.test(name)) return data;
+  return new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+}
+
+function parseGpx(text, id) {
+  const type = (/<type>([^<]*)<\/type>/.exec(text) || [])[1] || '';
+  const name = (/<trk>\s*<name>([^<]*)<\/name>/.exec(text) || [])[1] || '';
+  const chunks = text.split('<trkpt ');
+  const lat = [], lon = [], sec = [];
+  let t0 = null, la0 = 0, lo0 = 0;
+  for (let i = 1; i < chunks.length; i++) {
+    const c = chunks[i];
+    const m = /lat="([-\d.]+)"\s+lon="([-\d.]+)"|lon="([-\d.]+)"\s+lat="([-\d.]+)"/.exec(c); if (!m) continue;
+    const la = +(m[1] || m[4]), lo = +(m[2] || m[3]);
+    const tm = /<time>([^<]+)<\/time>/.exec(c); const t = tm ? Date.parse(tm[1]) : NaN;
+    if (t0 === null && !isNaN(t)) t0 = t;
+    if (lat.length) {
+      const dy = (la - la0) * 111320, dx = (lo - lo0) * 111320 * Math.cos(la * Math.PI / 180);
+      if (dx * dx + dy * dy < 64 && i < chunks.length - 1) continue; // thin to ~8 m spacing, always keep the last point
+    }
+    lat.push(+la.toFixed(5)); lon.push(+lo.toFixed(5)); sec.push(isNaN(t) || t0 === null ? 0 : Math.round((t - t0) / 1000));
+    la0 = la; lo0 = lo;
+  }
+  if (lat.length < 2) return null;
+  return { id, name, type, t: t0 || 0, lat, lon, sec };
+}
+
+async function loadMapFiles(files) {
+  $('mErr').hidden = true; $('mStatus').textContent = 'Reading files…';
+  try {
+    const items = [];
+    let csvText = null;
+    for (const f of files) {
+      if (/\.zip$/i.test(f.name)) {
+        const got = await unzip(await f.arrayBuffer(), n => /\.gpx(\.gz)?$/i.test(n) || /(^|\/)activities\.csv$/i.test(n));
+        for (const g of got) {
+          if (/\.csv$/i.test(g.name)) csvText = new TextDecoder().decode(g.data);
+          else items.push(g);
+        }
+      } else if (/\.gpx(\.gz)?$/i.test(f.name)) items.push({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) });
+      else if (/activities\.csv$/i.test(f.name)) csvText = await f.text();
+    }
+    if (!items.length) throw new Error('No .gpx files found. Strava saves routes as .gpx in the "activities" folder of your export. Runs recorded as .fit files are not supported yet.');
+    const byId = new Map(mp.tracks.map(t => [t.id, t]));
+    let added = 0, done = 0;
+    for (const it of items) {
+      const id = it.name.split('/').pop().replace(/\.gpx(\.gz)?$/i, '');
+      const tr = parseGpx(new TextDecoder().decode(await gunzipMaybe(it.name, it.data)), id);
+      if (tr) { if (!byId.has(id)) added++; byId.set(id, tr); }
+      if (++done % 20 === 0) { $('mStatus').textContent = `Reading routes… ${done} of ${items.length}`; await new Promise(r => setTimeout(r)); }
+    }
+    mp.tracks = [...byId.values()].sort((a, b) => a.t - b.t);
+    await idb('put', mp.tracks);
+    if (csvText) loadText(csvText, 'activities.csv');
+    setupAreas();
+    $('mStatus').textContent = `${mp.tracks.length} routes loaded (${added} new)${csvText ? ', and your dashboard stats were updated from activities.csv' : ''}.`;
+  } catch (e) { $('mErr').textContent = e.message; $('mErr').hidden = false; $('mStatus').textContent = ''; }
+}
+
+/* group runs by where they start, so a trip abroad doesn't shrink your home map to a dot */
+function setupAreas() {
+  const areas = [];
+  // runs only: Strava GPX marks them <type>running</type>; files without a type are kept
+  for (const t of mp.tracks.filter(t => !t.type || /run/i.test(t.type))) {
+    const la = t.lat[0], lo = t.lon[0];
+    let a = areas.find(a => Math.abs(a.la - la) < 0.4 && Math.abs(a.lo - lo) < 0.5);
+    if (!a) areas.push(a = { la, lo, tracks: [] });
+    a.tracks.push(t);
+  }
+  areas.sort((a, b) => b.tracks.length - a.tracks.length);
+  mp.areas = areas; mp.area = Math.min(mp.area, areas.length - 1);
+  $('mAreas').innerHTML = areas.map((a, i) => {
+    const f = a.tracks[0].t, l = a.tracks[a.tracks.length - 1].t;
+    const when = fmtMonthYr(f) === fmtMonthYr(l) ? fmtMonthYr(f) : `${fmtMonthYr(f)} to ${fmtMonthYr(l)}`;
+    return `<button class="btn ghost" type="button" data-area="${i}" aria-pressed="${i === mp.area}" title="${when}">${a.tracks.length} run${a.tracks.length === 1 ? '' : 's'} · ${when}</button>`;
+  }).join('');
+  $('mPanel').hidden = !areas.length;
+  prepArea(); fitView(); drawMap();
+}
+
+/* project the current area to flat metres and pre-compute distances for trimming */
+function prepArea() {
+  const a = mp.areas[mp.area]; if (!a) return;
+  const k = Math.cos(a.la * Math.PI / 180) * 111320;
+  for (const t of a.tracks) {
+    if (t.x && t.k === k) continue;
+    t.k = k; t.x = new Float64Array(t.lat.length); t.y = new Float64Array(t.lat.length); t.d = new Float64Array(t.lat.length);
+    for (let i = 0; i < t.lat.length; i++) {
+      t.x[i] = t.lon[i] * k; t.y[i] = -t.lat[i] * 111320;
+      t.d[i] = i ? t.d[i - 1] + Math.hypot(t.x[i] - t.x[i - 1], t.y[i] - t.y[i - 1]) : 0;
+    }
+    t.dur = t.sec[t.sec.length - 1] || t.lat.length;
+  }
+}
+
+function canvasSize() {
+  const c = $('mCanvas'), r = c.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return { w, h, dpr };
+}
+function fitView() {
+  const a = mp.areas[mp.area]; if (!a) return;
+  const xs = [], ys = [];
+  for (const t of a.tracks) for (let i = 0; i < t.x.length; i += 5) { xs.push(t.x[i]); ys.push(t.y[i]); }
+  xs.sort((p, q) => p - q); ys.sort((p, q) => p - q);
+  const q = (arr, f) => arr[Math.floor((arr.length - 1) * f)];
+  const x0 = q(xs, .005), x1 = q(xs, .995), y0 = q(ys, .005), y1 = q(ys, .995);
+  const { w, h } = canvasSize();
+  const s = Math.min(w / Math.max(x1 - x0, 200), h / Math.max(y1 - y0, 200)) * 0.9;
+  mp.view = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, s };
+}
+
+/* Additive orange strokes on near-black: one pass is orange, many passes add up to yellow, then white. */
+function strokeTrack(ctx, t, upto, toScreen, trim) {
+  const n = t.x.length, end = t.d[n - 1];
+  let started = false;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    if (upto != null && t.sec[i] > upto) break;
+    if (trim && (t.d[i] < TRIM_MI * MI || t.d[i] > end - TRIM_MI * MI)) { started = false; continue; }
+    const [sx, sy] = toScreen(t.x[i], t.y[i]);
+    if (!started) { ctx.moveTo(sx, sy); started = true; } else ctx.lineTo(sx, sy);
+  }
+  ctx.stroke();
+}
+function headAt(t, upto, trim) {
+  let i = 0; while (i < t.sec.length - 1 && t.sec[i + 1] <= upto) i++;
+  const end = t.d[t.d.length - 1];
+  if (trim && (t.d[i] < TRIM_MI * MI || t.d[i] > end - TRIM_MI * MI)) return null;
+  return i;
+}
+
+function drawMap() {
+  const a = mp.areas[mp.area]; if (!a || !mp.view || $('viewMap').hidden) return;
+  const c = $('mCanvas'), { w, h, dpr } = canvasSize(), ctx = c.getContext('2d');
+  const v = mp.view, trim = $('mTrim').checked;
+  const toScreen = (x, y) => [(x - v.cx) * v.s + w / 2, (y - v.cy) * v.s + h / 2];
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#08090b'; ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const n = a.tracks.length;
+  const alpha = clamp(3 / Math.sqrt(n), 0.18, 0.6);
+  const lw = clamp(v.s * 6, 1.1, 3) * dpr;
+  let label = '', sub = '';
+  if (mp.mode === 'heat') {
+    ctx.strokeStyle = `rgba(255,96,32,${alpha})`; ctx.lineWidth = lw;
+    for (const t of a.tracks) strokeTrack(ctx, t, null, toScreen, trim);
+    const mi = a.tracks.reduce((s, t) => s + t.d[t.d.length - 1], 0) / MI;
+    label = `${n} runs`; sub = `${Math.round(mi).toLocaleString()} miles`;
+  } else if (mp.mode === 'race') {
+    // every run starts together at time zero; heads show where each run was at that moment
+    const maxDur = Math.max(...a.tracks.map(t => t.dur));
+    const upto = mp.p * maxDur;
+    ctx.strokeStyle = `rgba(255,96,32,${alpha * 0.8})`; ctx.lineWidth = lw;
+    for (const t of a.tracks) strokeTrack(ctx, t, upto, toScreen, trim);
+    if (mp.p < 1) {
+      ctx.fillStyle = 'rgba(120,200,255,0.9)';
+      for (const t of a.tracks) {
+        if (upto > t.dur) continue;
+        const i = headAt(t, upto, trim); if (i == null) continue;
+        const [sx, sy] = toScreen(t.x[i], t.y[i]);
+        ctx.beginPath(); ctx.arc(sx, sy, 2.6 * dpr, 0, 7); ctx.fill();
+      }
+    }
+    const running = a.tracks.filter(t => upto <= t.dur).length;
+    label = fmtTime(upto); sub = mp.p < 1 ? `${running} of ${n} runs still going` : `${n} runs`;
+  } else {
+    // runs appear in the order you ran them, each drawn over a short window
+    const pos = mp.p * (n + 1.5);
+    ctx.lineWidth = lw;
+    let miles = 0, cur = a.tracks[0];
+    a.tracks.forEach((t, i) => {
+      const f = clamp((pos - i) / 1.5, 0, 1); if (f <= 0) return;
+      cur = t;
+      const fresh = f < 1 || pos - i < 3;
+      ctx.strokeStyle = fresh ? 'rgba(140,210,255,0.85)' : `rgba(255,96,32,${alpha})`;
+      strokeTrack(ctx, t, f < 1 ? f * t.dur : null, toScreen, trim);
+      miles += t.d[t.d.length - 1] * f / MI;
+    });
+    label = fmtDate(cur.t); sub = `${Math.round(miles).toLocaleString()} miles · ${Math.min(Math.ceil(pos), n)} of ${n} runs`;
+  }
+  // caption baked into the canvas so saved images and videos carry it
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.font = `600 ${22 * dpr}px "Barlow Condensed", "Arial Narrow", sans-serif`;
+  ctx.fillText(label, 16 * dpr, 34 * dpr);
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = `${13 * dpr}px system-ui, sans-serif`;
+  ctx.fillText(sub, 16 * dpr, 54 * dpr);
+}
+
+function setMode(m) {
+  mp.mode = m;
+  document.querySelectorAll('#viewMap [data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
+  $('mPlayBar').style.visibility = m === 'heat' ? 'hidden' : 'visible';
+  stopPlay(); mp.p = m === 'heat' ? 1 : 0; $('mScrub').value = mp.p * 1000;
+  drawMap();
+  if (m !== 'heat') startPlay();
+}
+function tick(ts) {
+  const dur = +$('mSpeed').value * 1000;
+  if (mp.last) mp.p = Math.min(1, mp.p + (ts - mp.last) / dur);
+  mp.last = ts; $('mScrub').value = mp.p * 1000; drawMap();
+  if (mp.p >= 1) { stopPlay(); if (mp.recorder) mp.recorder.stop(); return; }
+  mp.raf = requestAnimationFrame(tick);
+}
+function startPlay() { if (mp.p >= 1) mp.p = 0; mp.playing = true; mp.last = 0; $('mPlay').textContent = 'Pause'; mp.raf = requestAnimationFrame(tick); }
+function stopPlay() { mp.playing = false; cancelAnimationFrame(mp.raf); $('mPlay').textContent = 'Play'; }
+
+function download(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function recordVideo() {
+  if (mp.mode === 'heat') setMode('build');
+  const c = $('mCanvas');
+  if (!c.captureStream || typeof MediaRecorder === 'undefined') { $('mStatus').textContent = 'This browser cannot record video. Try Chrome or Firefox.'; return; }
+  const type = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  const rec = new MediaRecorder(c.captureStream(30), type ? { mimeType: type, videoBitsPerSecond: 8e6 } : {});
+  const parts = [];
+  rec.ondataavailable = e => e.data.size && parts.push(e.data);
+  rec.onstop = () => {
+    mp.recorder = null; $('mVid').disabled = false; $('mVid').textContent = 'Save video';
+    const mt = rec.mimeType || 'video/webm';
+    download(new Blob(parts, { type: mt }), `runs-${mp.mode}.${/mp4/.test(mt) ? 'mp4' : 'webm'}`);
+  };
+  mp.recorder = rec; $('mVid').disabled = true; $('mVid').textContent = 'Recording…';
+  stopPlay(); mp.p = 0; drawMap(); rec.start(); startPlay();
+}
+
+function initMap() {
+  const wrap = $('mWrap'), c = $('mCanvas');
+  $('mPickZip').onclick = () => $('mZip').click();
+  $('mPickDir').onclick = () => $('mDir').click();
+  $('mPickFiles').onclick = () => $('mFiles').click();
+  ['mZip', 'mDir', 'mFiles'].forEach(id => $(id).onchange = e => { loadMapFiles([...e.target.files]); e.target.value = ''; });
+  const drop = $('mDrop');
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', async e => {
+    // dropped folders need the entries API to list their files
+    const entries = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    const files = [];
+    const walk = ent => new Promise(res => {
+      if (ent.isFile) ent.file(f => { files.push(f); res(); }, () => res());
+      else { const r = ent.createReader(), all = []; const next = () => r.readEntries(async es => { if (!es.length) { for (const x of all) await walk(x); res(); } else { all.push(...es); next(); } }, () => res()); next(); }
+    });
+    if (entries.length) { for (const en of entries) await walk(en); } else files.push(...e.dataTransfer.files);
+    loadMapFiles(files);
+  });
+  $('mAreas').addEventListener('click', e => {
+    const b = e.target.closest('[data-area]'); if (!b) return;
+    mp.area = +b.dataset.area; stopPlay();
+    $('mAreas').querySelectorAll('[data-area]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    prepArea(); fitView(); if (mp.mode !== 'heat') { mp.p = 0; startPlay(); } else drawMap();
+  });
+  document.querySelectorAll('#viewMap [data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  $('mPlay').onclick = () => mp.playing ? stopPlay() : startPlay();
+  $('mScrub').oninput = e => { stopPlay(); mp.p = e.target.value / 1000; drawMap(); };
+  $('mTrim').onchange = drawMap;
+  $('mPng').onclick = () => $('mCanvas').toBlob(b => b && download(b, `runs-${mp.mode}.png`), 'image/png');
+  $('mVid').onclick = recordVideo;
+  // pan and zoom (mouse, touch, pinch)
+  const ptrs = new Map(); let pinch = null;
+  const scale = (f, px, py) => { const v = mp.view, { w, h } = canvasSize(); const wx = (px - w / 2) / v.s + v.cx, wy = (py - h / 2) / v.s + v.cy; v.s *= f; v.cx = wx - (px - w / 2) / v.s; v.cy = wy - (py - h / 2) / v.s; };
+  const local = e => { const r = c.getBoundingClientRect(), d = c.width / r.width; return [(e.clientX - r.left) * d, (e.clientY - r.top) * d]; };
+  wrap.addEventListener('wheel', e => { if (!mp.view) return; e.preventDefault(); const [x, y] = local(e); scale(Math.exp(-e.deltaY * 0.0015), x, y); drawMap(); }, { passive: false });
+  wrap.addEventListener('pointerdown', e => { wrap.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e)); wrap.classList.add('drag'); });
+  wrap.addEventListener('pointermove', e => {
+    if (!ptrs.has(e.pointerId) || !mp.view) return;
+    const prev = ptrs.get(e.pointerId), now = local(e); ptrs.set(e.pointerId, now);
+    if (ptrs.size === 2) {
+      const [p, q] = [...ptrs.values()], d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+      if (pinch) scale(d / pinch, (p[0] + q[0]) / 2, (p[1] + q[1]) / 2);
+      pinch = d;
+    } else { mp.view.cx -= (now[0] - prev[0]) / mp.view.s; mp.view.cy -= (now[1] - prev[1]) / mp.view.s; }
+    if (!mp.playing) drawMap();
+  });
+  const up = e => { ptrs.delete(e.pointerId); pinch = null; if (!ptrs.size) wrap.classList.remove('drag'); };
+  wrap.addEventListener('pointerup', up); wrap.addEventListener('pointercancel', up);
+  wrap.addEventListener('dblclick', () => { fitView(); drawMap(); });
+  new ResizeObserver(() => { if (!mp.playing) drawMap(); }).observe(wrap);
+  $('mPlayBar').style.visibility = 'hidden';
+}
+
+let mapInit = false;
+async function mapShown() {
+  if (!mapInit) {
+    mapInit = true; initMap();
+    const saved = await idb('get');
+    if (Array.isArray(saved) && saved.length) { mp.tracks = saved; $('mStatus').textContent = `${saved.length} routes saved on this device. Drop a newer export to add more.`; }
+  }
+  if (mp.tracks.length && !mp.areas.length) setupAreas(); else { if (!mp.view) fitView(); drawMap(); }
+}
+
+const savedTab = lsGet(TAB_KEY);
+if (savedTab === 'plan' || savedTab === 'map') showTab(savedTab);
 
 </script>
