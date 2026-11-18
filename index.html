@@ -828,7 +828,7 @@ details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background
   <header class="top">
     <div>
       <h1>Run Dashboard</h1>
-      <p class="sub" id="meta">Upload your Strava activities.csv to see your numbers.</p>
+      <p class="sub" id="meta">Upload your Strava export to see your numbers.</p>
     </div>
     <div class="actions" id="hdrActions">
       <label for="range" class="sub" style="margin:0">Show</label>
@@ -849,15 +849,18 @@ details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background
 
   <div id="viewDash" class="view" role="tabpanel">
   <div class="drop" id="drop" tabindex="0">
-    <p><b>Drop activities.csv here</b> or pick the file. It is read in your browser and never uploaded anywhere. Your last upload is remembered on this device, so re-upload only when you want fresh numbers.</p>
+    <p><b>Drop your Strava export here</b>, either the zip Strava emails you or the unzipped folder. This one upload fills in your stats and your route map. It is read in your browser and never uploaded anywhere, and it is remembered on this device, so re-upload only when you want fresh numbers.</p>
     <div class="actions">
-      <input type="file" id="file" accept=".csv,text/csv" hidden>
-      <button class="btn" id="pick" type="button">Choose CSV</button>
+      <input type="file" id="file" accept=".zip,.csv,.gpx,.gz,application/zip,text/csv" multiple hidden>
+      <input type="file" id="dir" webkitdirectory hidden>
+      <button class="btn" id="pick" type="button">Choose zip</button>
+      <button class="btn ghost" id="pickDir" type="button">Choose folder</button>
       <button class="btn ghost" id="sample" type="button">Use sample data</button>
     </div>
   </div>
+  <p class="sub" id="loadStatus" aria-live="polite" hidden></p>
   <div class="err" id="err" hidden role="alert"></div>
-  <div class="banner" id="banner" hidden>You are looking at made-up sample data. Upload your own activities.csv to replace it.</div>
+  <div class="banner" id="banner" hidden>You are looking at made-up sample data. Upload your Strava export to replace it.</div>
 
   <section class="panel race" aria-label="Marathon countdown">
     <div>
@@ -945,7 +948,7 @@ details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background
   <details class="panel bk" id="firstRace">
     <summary>Training for your first race? Start here</summary>
     <ul class="guide" style="margin-top:8px">
-      <li><b>Get your data:</b> on the Strava website go to Settings, then My Account, then "Download or Delete Your Account", and request your archive. Strava emails you a zip. Unzip it and upload <code>activities.csv</code> above. Nothing leaves your device.</li>
+      <li><b>Get your data:</b> on the Strava website go to Settings, then My Account, then "Download or Delete Your Account", and request your archive. Strava emails you a zip. Drop that zip (or the unzipped folder) in the box above. Nothing leaves your device.</li>
       <li><b>Set your race:</b> pick the race date at the top. Leave "Peak weekly miles" blank to get a sensible default, or type the most you are comfortable running in a week.</li>
       <li><b>Build slowly:</b> add no more than about 10% to your weekly miles each week, and take an easier week every fourth week. The weekly chart shows the plan as a dashed line.</li>
       <li><b>Make one run long:</b> your longest run is the most important number. For a 5K aim to reach 3 to 4 miles, a 10K 7 to 8, a half marathon 10 to 12, a marathon 18 to 20. Check "10 longest runs" below to see how close you are.</li>
@@ -964,18 +967,14 @@ details.bk textarea { width: 100%; min-height: 90px; margin-top: 8px; background
   </div>
 
   <div id="viewMap" class="view" role="tabpanel" hidden>
-    <div class="drop" id="mDrop" tabindex="0">
-      <p><b>Drop your Strava export here</b>: the whole zip, the <code>activities</code> folder, or some .gpx files. They are read in your browser and never uploaded. Your routes are remembered on this device.</p>
-      <div class="actions">
-        <input type="file" id="mZip" accept=".zip,application/zip" hidden>
-        <input type="file" id="mFiles" accept=".gpx,.gz" multiple hidden>
-        <input type="file" id="mDir" webkitdirectory hidden>
-        <button class="btn" id="mPickZip" type="button">Choose zip</button>
+    <section class="panel" id="mEmpty" hidden>
+      <h3>No routes yet</h3>
+      <p class="sub">Upload your Strava export, zipped or unzipped, on the Dashboard tab, or drop it anywhere on this page. The map is drawn from the .gpx files in its activities folder.</p>
+      <div class="actions" style="margin-top:10px">
+        <button class="btn" id="mPick" type="button">Choose zip</button>
         <button class="btn ghost" id="mPickDir" type="button">Choose folder</button>
-        <button class="btn ghost" id="mPickFiles" type="button">Choose GPX files</button>
       </div>
-    </div>
-    <div class="err" id="mErr" hidden role="alert"></div>
+    </section>
     <p class="sub" id="mStatus" aria-live="polite"></p>
 
     <section class="panel" id="mPanel" hidden>
@@ -7906,25 +7905,21 @@ function render() {
 }
 
 /* ---------- wiring ---------- */
-function readFile(f) {
-  if (!f) return;
-  const rd = new FileReader();
-  rd.onload = () => loadText(String(rd.result), f.name);
-  rd.onerror = () => { $('err').textContent = 'Could not read that file.'; $('err').hidden = false; };
-  rd.readAsText(f);
-}
 function saveSettings() { lsSet(SETTINGS, settings); }
 
 function init() {
   const s = lsGet(SETTINGS); if (s) Object.assign(settings, s);
   $('raceDate').value = settings.race; $('goal').value = settings.goal; $('ref').value = settings.ref; $('range').value = settings.range;
   $('pick').onclick = () => $('file').click();
-  $('file').onchange = e => { readFile(e.target.files[0]); e.target.value = ''; };
+  $('pickDir').onclick = () => $('dir').click();
+  ['file', 'dir'].forEach(id => $(id).onchange = e => { loadExport([...e.target.files]); e.target.value = ''; });
   $('sample').onclick = () => setRuns(makeSample(), { sample: true });
   const drop = $('drop');
   ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
-  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-  drop.addEventListener('drop', e => readFile(e.dataTransfer.files[0]));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, () => drop.classList.remove('over')));
+  // drops anywhere on the page (any tab) load the export
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => { e.preventDefault(); droppedFiles(e.dataTransfer).then(loadExport); });
   drop.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
   const bind = (id, key, after) => $(id).addEventListener('change', e => { settings[key] = e.target.value; if (after) after(); saveSettings(); render(); });
   $('topN').value = settings.topN; bind('topN', 'topN');
@@ -8233,37 +8228,72 @@ function parseGpx(text, id) {
   return { id, name, type, t: t0 || 0, lat, lon, sec };
 }
 
-async function loadMapFiles(files) {
-  $('mErr').hidden = true; $('mStatus').textContent = 'Reading files…';
+/* Dropped folders need the entries API to list their files. */
+async function droppedFiles(dt) {
+  const entries = [...dt.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return [...dt.files];
+  const files = [];
+  const walk = ent => new Promise(res => {
+    if (ent.isFile) ent.file(f => { files.push(f); res(); }, () => res());
+    else { const r = ent.createReader(), all = []; const next = () => r.readEntries(async es => { if (!es.length) { for (const x of all) await walk(x); res(); } else { all.push(...es); next(); } }, () => res()); next(); }
+  });
+  for (const en of entries) await walk(en);
+  return files;
+}
+
+async function loadSavedTracks() {
+  if (mp.savedLoaded) return;
+  mp.savedLoaded = true;
+  const saved = await idb('get');
+  if (Array.isArray(saved) && saved.length && !mp.tracks.length) mp.tracks = saved;
+}
+
+/* One upload for everything: a Strava export zip, the unzipped folder, or loose activities.csv / .gpx files.
+   activities.csv feeds the dashboard and plan; the .gpx files feed the map. */
+async function loadExport(files) {
+  const status = t => { $('loadStatus').textContent = t; $('loadStatus').hidden = !t; $('mStatus').textContent = t; };
+  $('err').hidden = true; status('Reading your export…');
+  const isGpx = n => /\.gpx(\.gz)?$/i.test(n);
+  const isCsv = n => /(^|\/)activities[^/]*\.csv$/i.test(n);
   try {
     const items = [];
     let csvText = null;
+    const loose = files.filter(f => /\.csv$/i.test(f.name));
     for (const f of files) {
+      const path = f.webkitRelativePath || f.name;
       if (/\.zip$/i.test(f.name)) {
-        const got = await unzip(await f.arrayBuffer(), n => /\.gpx(\.gz)?$/i.test(n) || /(^|\/)activities\.csv$/i.test(n));
-        for (const g of got) {
-          if (/\.csv$/i.test(g.name)) csvText = new TextDecoder().decode(g.data);
-          else items.push(g);
+        for (const g of await unzip(await f.arrayBuffer(), n => isGpx(n) || isCsv(n))) {
+          if (isCsv(g.name)) csvText = new TextDecoder().decode(g.data); else items.push(g);
         }
-      } else if (/\.gpx(\.gz)?$/i.test(f.name)) items.push({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) });
-      else if (/activities\.csv$/i.test(f.name)) csvText = await f.text();
+      } else if (isGpx(f.name)) items.push({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) });
+      // in a folder, only the top-level activities.csv; a single CSV picked on its own is accepted whatever its name
+      else if ((isCsv(f.name) && path.split('/').length <= 2) || (loose.length === 1 && loose[0] === f && files.length === 1)) csvText = await f.text();
     }
-    if (!items.length) throw new Error('No .gpx files found. Strava saves routes as .gpx in the "activities" folder of your export. Runs recorded as .fit files are not supported yet.');
-    const byId = new Map(mp.tracks.map(t => [t.id, t]));
-    let added = 0, done = 0;
-    for (const it of items) {
-      const id = it.name.split('/').pop().replace(/\.gpx(\.gz)?$/i, '');
-      const tr = parseGpx(new TextDecoder().decode(await gunzipMaybe(it.name, it.data)), id);
-      if (tr) { if (!byId.has(id)) added++; byId.set(id, tr); }
-      if (++done % 20 === 0) { $('mStatus').textContent = `Reading routes… ${done} of ${items.length}`; await new Promise(r => setTimeout(r)); }
+    if (!csvText && !items.length) throw new Error('Could not find activities.csv or any .gpx route files in that. Pick the zip Strava emailed you, or the unzipped export folder.');
+    const parts = [];
+    if (csvText) {
+      loadText(csvText, 'activities.csv');
+      if ($('err').hidden) parts.push(`${state.runs.length} runs from activities.csv`);
     }
-    mp.tracks = [...byId.values()].sort((a, b) => a.t - b.t);
-    await idb('put', mp.tracks);
-    if (csvText) loadText(csvText, 'activities.csv');
-    setupAreas();
-    $('mStatus').textContent = `${mp.tracks.length} routes loaded (${added} new)${csvText ? ', and your dashboard stats were updated from activities.csv' : ''}.`;
-  } catch (e) { $('mErr').textContent = e.message; $('mErr').hidden = false; $('mStatus').textContent = ''; }
+    if (items.length) {
+      await loadSavedTracks();
+      const byId = new Map(mp.tracks.map(t => [t.id, t]));
+      let done = 0;
+      for (const it of items) {
+        const id = it.name.split('/').pop().replace(/\.gpx(\.gz)?$/i, '');
+        const tr = parseGpx(new TextDecoder().decode(await gunzipMaybe(it.name, it.data)), id);
+        if (tr) byId.set(id, tr);
+        if (++done % 20 === 0) { status(`Reading route maps… ${done} of ${items.length}`); await new Promise(r => setTimeout(r)); }
+      }
+      mp.tracks = [...byId.values()].sort((a, b) => a.t - b.t);
+      await idb('put', mp.tracks);
+      setupAreas(); refreshMapEmpty();
+      parts.push(`${mp.tracks.length} route maps`);
+    }
+    status(parts.length ? `Loaded ${parts.join(' and ')}.${items.length ? '' : ' No .gpx route files were in it, so the Map tab is unchanged.'}` : '');
+  } catch (e) { $('err').textContent = e.message; $('err').hidden = false; status(''); }
 }
+function refreshMapEmpty() { $('mEmpty').hidden = mp.tracks.length > 0; }
 
 /* group runs by where they start, so a trip abroad doesn't shrink your home map to a dot */
 function setupAreas() {
@@ -8317,7 +8347,9 @@ function canvasSize() {
   return { w, h, dpr };
 }
 function fitView() {
-  const a = mp.areas[mp.area]; if (!a || !mp.map) return;
+  const a = mp.areas[mp.area];
+  if (!a || !mp.map || $('viewMap').hidden) { mp.needFit = true; return; }
+  mp.needFit = false;
   const las = [], los = [];
   for (const t of a.tracks) for (let i = 0; i < t.lat.length; i += 5) { las.push(t.lat[i]); los.push(t.lon[i]); }
   las.sort((p, q) => p - q); los.sort((p, q) => p - q);
@@ -8490,24 +8522,8 @@ function recordVideo() {
 
 function initMap() {
   const wrap = $('mWrap'), c = $('mCanvas');
-  $('mPickZip').onclick = () => $('mZip').click();
-  $('mPickDir').onclick = () => $('mDir').click();
-  $('mPickFiles').onclick = () => $('mFiles').click();
-  ['mZip', 'mDir', 'mFiles'].forEach(id => $(id).onchange = e => { loadMapFiles([...e.target.files]); e.target.value = ''; });
-  const drop = $('mDrop');
-  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
-  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-  drop.addEventListener('drop', async e => {
-    // dropped folders need the entries API to list their files
-    const entries = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
-    const files = [];
-    const walk = ent => new Promise(res => {
-      if (ent.isFile) ent.file(f => { files.push(f); res(); }, () => res());
-      else { const r = ent.createReader(), all = []; const next = () => r.readEntries(async es => { if (!es.length) { for (const x of all) await walk(x); res(); } else { all.push(...es); next(); } }, () => res()); next(); }
-    });
-    if (entries.length) { for (const en of entries) await walk(en); } else files.push(...e.dataTransfer.files);
-    loadMapFiles(files);
-  });
+  $('mPick').onclick = () => $('file').click();
+  $('mPickDir').onclick = () => $('dir').click();
   $('mAreas').addEventListener('click', e => {
     const b = e.target.closest('[data-area]'); if (!b) return;
     mp.area = +b.dataset.area; stopPlay();
@@ -8549,11 +8565,12 @@ let mapInit = false;
 async function mapShown() {
   if (!mapInit) {
     mapInit = true; initMap();
-    const saved = await idb('get');
-    if (Array.isArray(saved) && saved.length) { mp.tracks = saved; $('mStatus').textContent = `${saved.length} routes saved on this device. Drop a newer export to add more.`; }
+    await loadSavedTracks();
   }
+  refreshMapEmpty();
   mp.map.invalidateSize(false);
-  if (mp.tracks.length && !mp.areas.length) setupAreas(); else drawMap();
+  if (mp.tracks.length && !mp.areas.length) setupAreas();
+  else { if (mp.needFit) fitView(); drawMap(); }
 }
 
 const savedTab = lsGet(TAB_KEY);
